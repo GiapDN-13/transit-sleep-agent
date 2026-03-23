@@ -209,5 +209,5 @@ __marimo__/
 # Spike / local output files
 ban_do_cua_toi.html
 
-# Local docs (notes, overviews, không commit lên repo)
-docs/
+# Local docs — tracked in repo để share kiến trúc
+# docs/

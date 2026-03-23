@@ -177,12 +177,12 @@ async def _send_ntfy_alert(destination_name: str, eta_min: int, retry: int) -> N
 
     try:
         if retry >= 2:
-            # Gửi 5 ping liên tiếp, cách nhau 4 giây → ~20 giây kêu như báo thức
-            ALARM_PINGS   = 5
-            ALARM_INTERVAL = 4  # giây
+            # Gửi 20 ping liên tiếp, cách nhau 0.5 giây → ~10 giây kêu như báo thức
+            ALARM_PINGS    = 20
+            ALARM_INTERVAL = 0.5  # giây
 
             logger.info(
-                "ntfy alarm loop: %d pings × %ds — topic=%s",
+                "ntfy alarm loop: %d pings × %.1fs — topic=%s",
                 ALARM_PINGS, ALARM_INTERVAL, config.NTFY_TOPIC,
             )
             for i in range(ALARM_PINGS):
