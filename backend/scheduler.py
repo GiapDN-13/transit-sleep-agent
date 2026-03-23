@@ -261,9 +261,9 @@ async def _tick(bot_app: Application) -> None:
     # --- WAKING: kiểm tra có cần retry không ---
     if session.status == TripStatus.WAKING:
         if (
-            session.wake_retry_count < WAKE_MAX_RETRIES
+            session.wake_retry_count < session.wake_max_retries
             and session.wake_sent_at is not None
-            and time.time() - session.wake_sent_at >= WAKE_RETRY_AFTER
+            and time.time() - session.wake_sent_at >= session.wake_retry_after
         ):
             session.wake_retry_count += 1
             session.wake_sent_at = time.time()

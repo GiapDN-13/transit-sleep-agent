@@ -133,6 +133,7 @@
     }
     .banner.error   { background: rgba(255,69,58,.15); border: 1px solid var(--danger);  color: var(--danger); }
     .banner.success { background: rgba(48,209,88,.12); border: 1px solid var(--success); color: var(--success); }
+    .banner.warn    { background: rgba(255,214,10,.12); border: 1px solid #ffd60a;        color: #ffd60a; }
     .banner.show { display: block; }
 
     .gps-badge {
@@ -143,12 +144,99 @@
       width: fit-content;
     }
     .gps-badge.show { display: inline-block; }
+
+    /* ---- SEARCH BAR ---- */
+    #search-bar {
+      position: absolute;
+      top: 10px; left: 12px; right: 12px;
+      z-index: 1000;
+    }
+    #search-input {
+      width: 100%;
+      padding: 11px 14px;
+      border-radius: var(--radius);
+      border: none;
+      background: var(--surface);
+      color: var(--text);
+      font-size: 15px;
+      box-shadow: 0 2px 14px rgba(0,0,0,.5);
+      outline: none;
+    }
+    #search-input::placeholder { color: var(--hint); }
+    #search-input:focus { outline: 2px solid var(--accent); }
+    #search-dropdown {
+      background: var(--surface);
+      border-radius: var(--radius);
+      margin-top: 4px;
+      box-shadow: 0 4px 20px rgba(0,0,0,.55);
+      display: none;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+    #search-dropdown.show { display: block; }
+    .search-item {
+      padding: 10px 14px;
+      cursor: pointer;
+      border-bottom: 1px solid rgba(255,255,255,.06);
+    }
+    .search-item:last-child { border-bottom: none; }
+    .search-item:active { background: rgba(255,255,255,.08); }
+    .search-item-name { font-size: 14px; font-weight: 600; }
+    .search-item-sub  { font-size: 12px; color: var(--hint); margin-top: 2px; }
+
+    /* ---- ALERT SETTINGS ---- */
+    #alert-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin: 0 12px 8px;
+      padding: 11px 14px;
+      background: var(--surface);
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 14px; font-weight: 600;
+      user-select: none;
+    }
+    #alert-body {
+      margin: 0 12px 10px;
+      padding: 14px 16px;
+      background: var(--surface);
+      border-radius: var(--radius);
+      display: none;
+    }
+    #alert-body.open { display: block; }
+    .stepper-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 6px 0;
+    }
+    .stepper-row + .stepper-row {
+      border-top: 1px solid rgba(255,255,255,.07);
+      padding-top: 12px; margin-top: 8px;
+    }
+    .stepper-label { font-size: 14px; font-weight: 600; }
+    .stepper-sub   { font-size: 12px; color: var(--hint); margin-top: 2px; }
+    .stepper       { display: flex; align-items: center; gap: 12px; }
+    .stp-btn {
+      width: 32px; height: 32px; border-radius: 50%;
+      border: 1.5px solid var(--accent);
+      background: transparent; color: var(--accent);
+      font-size: 20px; font-weight: 700; line-height: 1;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+    }
+    .stp-btn:disabled { opacity: .35; cursor: not-allowed; border-color: var(--hint); color: var(--hint); }
+    .stp-val { font-size: 16px; font-weight: 700; min-width: 56px; text-align: center; }
   </style>
 </head>
 <body>
 
 <!-- ===================== PICK MODE ===================== -->
 <div id="screen-pick" class="screen">
+  <!-- Search bar — overlay trên bản đồ -->
+  <div id="search-bar">
+    <input id="search-input" type="text"
+           placeholder="🔍 Tìm địa chỉ, tên đường, địa danh..."
+           autocomplete="off" spellcheck="false" />
+    <div id="search-dropdown"></div>
+  </div>
+
   <div id="pick-map"></div>
   <div id="pick-bottom">
     <!-- Preset chips -->
@@ -159,6 +247,47 @@
       <div class="card-label">Điểm xuống đã chọn</div>
       <div id="pick-dest-name">Chưa chọn — nhấn vào bản đồ hoặc chọn nhanh bên trên</div>
       <div id="pick-dest-sub"></div>
+    </div>
+
+    <!-- Alert settings (collapsible) -->
+    <div id="alert-header">
+      <span>⚙️ Cài đặt cảnh báo</span>
+      <span id="alert-arrow">▸</span>
+    </div>
+    <div id="alert-body">
+      <div class="stepper-row">
+        <div>
+          <div class="stepper-label">Nhắc lại sau</div>
+          <div class="stepper-sub">Phút chờ giữa 2 lần báo động</div>
+        </div>
+        <div class="stepper">
+          <button class="stp-btn" id="retry-minus">−</button>
+          <div class="stp-val" id="retry-val">3 phút</div>
+          <button class="stp-btn" id="retry-plus">+</button>
+        </div>
+      </div>
+      <div class="stepper-row">
+        <div>
+          <div class="stepper-label">Số lần cảnh báo</div>
+          <div class="stepper-sub">Tối đa trước khi ngừng nhắc</div>
+        </div>
+        <div class="stepper">
+          <button class="stp-btn" id="maxr-minus">−</button>
+          <div class="stp-val" id="maxr-val">3 lần</div>
+          <button class="stp-btn" id="maxr-plus">+</button>
+        </div>
+      </div>
+      <div class="stepper-row">
+        <div>
+          <div class="stepper-label">💤 Snooze</div>
+          <div class="stepper-sub">Nhắc lại sau khi bấm snooze</div>
+        </div>
+        <div class="stepper">
+          <button class="stp-btn" id="snooze-minus">−</button>
+          <div class="stp-val" id="snooze-val">5 phút</div>
+          <button class="stp-btn" id="snooze-plus">+</button>
+        </div>
+      </div>
     </div>
 
     <button class="btn btn-primary" id="btn-confirm-dest" disabled>
@@ -183,6 +312,11 @@
   </div>
 
   <div class="card track-card" style="margin-bottom:10px">
+    <div class="card-label">Cài đặt cảnh báo</div>
+    <div class="card-value" id="track-alert-cfg" style="font-size:14px;color:var(--hint)">—</div>
+  </div>
+
+  <div class="card track-card" style="margin-bottom:10px">
     <div class="card-label">ETA đến nơi</div>
     <div class="eta-value far" id="track-eta">—</div>
   </div>
@@ -196,6 +330,7 @@
     <div class="gps-badge" id="gps-badge">Cập nhật mỗi 30s</div>
   </div>
 
+  <div class="banner warn"    id="track-warn"></div>
   <div class="banner error"   id="track-error"></div>
   <div class="banner success" id="track-success"></div>
 
@@ -285,7 +420,8 @@
       navigator.geolocation.getCurrentPosition(pos => {
         const { latitude: lat, longitude: lon } = pos.coords;
         userMarker = L.marker([lat, lon], { icon: myLocIcon }).addTo(map);
-        map.setView([lat, lon], 14);
+        if (!selectedDest) map.setView([lat, lon], 14);
+        updateRouteLine();   // cập nhật route line nếu đã có điểm xuống
       }, () => {});
     }
 
@@ -337,10 +473,145 @@
       }
     }
 
-    // -- Confirm button → sendData → bot receives destination --
+    // -- Search (forward geocoding via Nominatim) --
+    let _searchTimer = null;
+    const searchInput    = document.getElementById('search-input');
+    const searchDropdown = document.getElementById('search-dropdown');
+
+    searchInput.addEventListener('input', () => {
+      clearTimeout(_searchTimer);
+      const q = searchInput.value.trim();
+      if (q.length < 3) { searchDropdown.classList.remove('show'); return; }
+      _searchTimer = setTimeout(() => doSearch(q), 500);
+    });
+
+    // Close dropdown on blur — delay để kịp nhận mousedown trên item
+    searchInput.addEventListener('blur', () =>
+      setTimeout(() => searchDropdown.classList.remove('show'), 200)
+    );
+
+    async function doSearch(q) {
+      try {
+        const url =
+          `https://nominatim.openstreetmap.org/search` +
+          `?q=${encodeURIComponent(q)}&format=json&limit=5&addressdetails=1` +
+          `&accept-language=vi&countrycodes=vn`;
+        const r = await fetch(url, {
+          headers: { 'User-Agent': 'TransitSleepAgent/1.0 (transit-sleep-agent)' },
+        });
+        const results = await r.json();
+        renderSearchResults(results);
+      } catch {
+        searchDropdown.classList.remove('show');
+      }
+    }
+
+    function renderSearchResults(results) {
+      if (!results.length) {
+        searchDropdown.innerHTML =
+          '<div class="search-item" style="color:var(--hint);cursor:default">Không tìm thấy kết quả</div>';
+        searchDropdown.classList.add('show');
+        return;
+      }
+      searchDropdown.innerHTML = results.map(r => {
+        const parts = r.display_name.split(',');
+        const name  = parts[0].trim();
+        const sub   = parts.slice(1, 3).join(', ').trim();
+        return (
+          `<div class="search-item" data-lat="${r.lat}" data-lon="${r.lon}" data-name="${name}">` +
+          `<div class="search-item-name">${name}</div>` +
+          `<div class="search-item-sub">${sub}</div>` +
+          `</div>`
+        );
+      }).join('');
+      searchDropdown.classList.add('show');
+      // pointerdown fires trước blur — hoạt động cả mouse lẫn touch screen
+      searchDropdown.querySelectorAll('.search-item[data-lat]').forEach(el => {
+        el.addEventListener('pointerdown', (e) => {
+          e.preventDefault();   // ngăn blur event tắt dropdown trước khi xử lý
+          const lat  = parseFloat(el.dataset.lat);
+          const lon  = parseFloat(el.dataset.lon);
+          const name = el.dataset.name;
+          searchInput.value = name;
+          searchDropdown.classList.remove('show');
+          map.setView([lat, lon], 16);
+          placePinAt(lat, lon);
+          selectDest(name, lat, lon, null);
+        });
+      });
+    }
+
+    // -- Route line (straight dashed — visual context only) --
+    let routeLine = null;
+
+    function updateRouteLine() {
+      if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+      if (!userMarker || !selectedDest) return;
+      const ul = userMarker.getLatLng();
+      routeLine = L.polyline(
+        [[ul.lat, ul.lng], [selectedDest.lat, selectedDest.lon]],
+        { color: '#2979ff', weight: 2.5, dashArray: '7 9', opacity: 0.65 },
+      ).addTo(map);
+      map.fitBounds(routeLine.getBounds(), { padding: [60, 60], maxZoom: 16 });
+    }
+
+    // Wrap selectDest để tự động cập nhật route line khi chọn điểm
+    const _origSelectDest = selectDest;
+    selectDest = function(name, lat, lon, presetIdx) {
+      _origSelectDest(name, lat, lon, presetIdx);
+      updateRouteLine();
+    };
+
+    // -- Alert settings (stepper) --
+    let retryAfterMin = 3;   // phút
+    let maxRetriesVal = 3;   // lần
+    let snoozeMin     = 5;   // phút
+
+    const retryValEl  = document.getElementById('retry-val');
+    const maxrValEl   = document.getElementById('maxr-val');
+    const snoozeValEl = document.getElementById('snooze-val');
+
+    function updateRetryDisplay()  { retryValEl.textContent  = `${retryAfterMin} phút`; }
+    function updateMaxrDisplay()   { maxrValEl.textContent   = `${maxRetriesVal} lần`; }
+    function updateSnoozeDisplay() { snoozeValEl.textContent = `${snoozeMin} phút`; }
+
+    document.getElementById('alert-header').addEventListener('click', () => {
+      const body  = document.getElementById('alert-body');
+      const arrow = document.getElementById('alert-arrow');
+      const open  = body.classList.toggle('open');
+      arrow.textContent = open ? '▾' : '▸';
+    });
+
+    document.getElementById('retry-minus').addEventListener('click', () => {
+      if (retryAfterMin > 1) { retryAfterMin--; updateRetryDisplay(); }
+    });
+    document.getElementById('retry-plus').addEventListener('click', () => {
+      if (retryAfterMin < 10) { retryAfterMin++; updateRetryDisplay(); }
+    });
+    document.getElementById('maxr-minus').addEventListener('click', () => {
+      if (maxRetriesVal > 1) { maxRetriesVal--; updateMaxrDisplay(); }
+    });
+    document.getElementById('maxr-plus').addEventListener('click', () => {
+      if (maxRetriesVal < 5) { maxRetriesVal++; updateMaxrDisplay(); }
+    });
+    document.getElementById('snooze-minus').addEventListener('click', () => {
+      if (snoozeMin > 1) { snoozeMin--; updateSnoozeDisplay(); }
+    });
+    document.getElementById('snooze-plus').addEventListener('click', () => {
+      if (snoozeMin < 15) { snoozeMin++; updateSnoozeDisplay(); }
+    });
+
+    // -- Confirm button → sendData (gửi cả alert_config) --
     document.getElementById('btn-confirm-dest').addEventListener('click', () => {
       if (!selectedDest) return;
-      tg.sendData(JSON.stringify(selectedDest));
+      tg.sendData(JSON.stringify({
+        ...selectedDest,
+        alert_config: {
+          retry_after_minutes: retryAfterMin,
+          max_retries: maxRetriesVal,
+          snooze_minutes: snoozeMin,
+        },
+      }));
     });
   }
 
@@ -350,6 +621,7 @@
   if (MODE === 'track') {
     let prepTimeSeconds = 0;
     let gpsIntervalId   = null;
+    let _firstTickDone  = false;   // để chỉ check ETA vs prep_time một lần
 
     const elDestName  = document.getElementById('track-dest-name');
     const elPrep      = document.getElementById('track-prep');
@@ -357,6 +629,7 @@
     const elGpsDot    = document.getElementById('gps-dot');
     const elGpsStatus = document.getElementById('gps-status');
     const elGpsBadge  = document.getElementById('gps-badge');
+    const elWarn      = document.getElementById('track-warn');
     const elError     = document.getElementById('track-error');
     const elSuccess   = document.getElementById('track-success');
     const btnStart    = document.getElementById('btn-start-track');
@@ -401,6 +674,14 @@
         elDestName.textContent = d.destination_name;
         prepTimeSeconds        = d.prep_time_seconds;
         elPrep.textContent     = fmtPrep(prepTimeSeconds);
+        // Hiển thị cài đặt cảnh báo
+        if (d.wake_retry_after != null && d.wake_max_retries != null) {
+          const retryMin  = Math.round(d.wake_retry_after / 60);
+          const snoozeMin = d.snooze_duration != null ? Math.round(d.snooze_duration / 60) : 5;
+          document.getElementById('track-alert-cfg').textContent =
+            `Nhắc ${retryMin} phút/lần × ${d.wake_max_retries} lần · Snooze ${snoozeMin} phút`;
+          document.getElementById('track-alert-cfg').style.color = 'var(--text)';
+        }
         return true;
       } catch {
         showBanner(elError, 'Khong ket noi duoc backend. Kiem tra ngrok dang chay chua.');
@@ -437,7 +718,24 @@
         const c = await getGps();
         setGps('ok', `${c.latitude.toFixed(5)}, ${c.longitude.toFixed(5)}`);
         const res = await postGps('gps/update', c.latitude, c.longitude);
-        if (res.eta_seconds != null) updateEta(res.eta_seconds);
+        if (res.eta_seconds != null) {
+          updateEta(res.eta_seconds);
+          // Lần đầu tiên có ETA → kiểm tra ETA có ít hơn prep_time không
+          if (!_firstTickDone) {
+            _firstTickDone = true;
+            const prepMin = Math.round(prepTimeSeconds / 60);
+            const etaMin  = Math.round(res.eta_seconds / 60);
+            if (res.eta_seconds <= prepTimeSeconds) {
+              elWarn.textContent =
+                `⚠️ ETA hiện tại chỉ còn ${etaMin} phút — ít hơn thời gian báo thức ${prepMin} phút. Bot sẽ cảnh báo ngay!`;
+              elWarn.classList.add('show');
+            } else if (res.eta_seconds <= prepTimeSeconds * 1.5) {
+              elWarn.textContent =
+                `⚠️ ETA còn ${etaMin} phút — khá gần với thời gian báo thức ${prepMin} phút.`;
+              elWarn.classList.add('show');
+            }
+          }
+        }
       } catch (e) {
         setGps('error', 'Loi cap nhat GPS');
         console.warn('GPS tick:', e.message);

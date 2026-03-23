@@ -31,6 +31,9 @@ class SessionResponse(BaseModel):
     destination_name: str
     prep_time_seconds: int
     status: str
+    wake_retry_after: int
+    wake_max_retries: int
+    snooze_duration: int
 
 
 class GpsPayload(BaseModel):
@@ -109,6 +112,9 @@ async def get_current_session():
         destination_name=session.destination_name,
         prep_time_seconds=session.prep_time_seconds,
         status=session.status.value,
+        wake_retry_after=session.wake_retry_after,
+        wake_max_retries=session.wake_max_retries,
+        snooze_duration=session.snooze_duration,
     )
 
 

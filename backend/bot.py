@@ -40,8 +40,6 @@ from backend.session_store import TripStatus
 import backend.session_store as store
 from backend.trip_logger import record_trip
 
-SNOOZE_SECONDS = 5 * 60
-
 logger = logging.getLogger(__name__)
 
 
@@ -235,12 +233,22 @@ async def cb_prep_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     dest_name   = _dest_name(dest)
     dest_coords = _dest_coords(dest)
 
+    alert_cfg = context.user_data.get("alert_config", {})
     store.create_session(
         destination_name=dest_name,
         destination_coords=dest_coords,
         prep_time_seconds=prep_seconds,
+        wake_retry_after=alert_cfg.get("wake_retry_after", 3 * 60),
+        wake_max_retries=alert_cfg.get("wake_max_retries", 3),
+        snooze_duration=alert_cfg.get("snooze_duration", 5 * 60),
     )
-    logger.info("Session created — dest=%s prep=%ds", dest_name, prep_seconds)
+    logger.info(
+        "Session created — dest=%s prep=%ds retry_after=%ds max_retries=%d snooze=%ds",
+        dest_name, prep_seconds,
+        alert_cfg.get("wake_retry_after", 180),
+        alert_cfg.get("wake_max_retries", 3),
+        alert_cfg.get("snooze_duration", 300),
+    )
 
     await query.edit_message_text(
         text=(
@@ -293,8 +301,21 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("❌ Dữ liệu từ bản đồ không hợp lệ. Thử lại nhé.")
         return
 
-    context.user_data["destination"] = {"name": name, "lat": lat, "lon": lon}
-    logger.info("Destination from map: %s (%.5f, %.5f)", name, lat, lon)
+    alert_cfg = data.get("alert_config", {})
+    retry_after_min = max(1, min(10, int(alert_cfg.get("retry_after_minutes", 3))))
+    max_retries     = max(1, min(5,  int(alert_cfg.get("max_retries", 3))))
+    snooze_min      = max(1, min(15, int(alert_cfg.get("snooze_minutes", 5))))
+
+    context.user_data["destination"]  = {"name": name, "lat": lat, "lon": lon}
+    context.user_data["alert_config"] = {
+        "wake_retry_after": retry_after_min * 60,
+        "wake_max_retries": max_retries,
+        "snooze_duration":  snooze_min * 60,
+    }
+    logger.info(
+        "Destination from map: %s (%.5f, %.5f) — retry_after=%dm max_retries=%d snooze=%dm",
+        name, lat, lon, retry_after_min, max_retries, snooze_min,
+    )
 
     # Xoá reply keyboard (bản đồ) rồi hỏi prep time bằng inline keyboard
     await update.message.reply_text(
@@ -329,20 +350,23 @@ async def cb_wake_ack(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def cb_wake_snooze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer("💤 Nhắc lại sau 5 phút")
     session = store.get_session()
     if not session:
+        await query.answer("❌ Hành trình đã kết thúc.")
         await query.edit_message_text("❌ Hành trình đã kết thúc. Gõ /start để bắt đầu lại.")
         return
+    snooze_sec = session.snooze_duration
+    snooze_min = snooze_sec // 60
+    await query.answer(f"💤 Nhắc lại sau {snooze_min} phút")
     session.status       = TripStatus.ACTIVE
-    session.snooze_until = time.time() + SNOOZE_SECONDS
+    session.snooze_until = time.time() + snooze_sec
     session.wake_sent_at = None
     session.eta_window   = []   # Reset smoothing window — bắt đầu đo lại sau snooze
     await query.edit_message_text(
-        text="💤 <b>Đã snooze 5 phút.</b>\nSẽ báo lại khi gần đến trạm.",
+        text=f"💤 <b>Đã snooze {snooze_min} phút.</b>\nSẽ báo lại khi gần đến trạm.",
         parse_mode="HTML",
     )
-    logger.info("Trip snoozed for %ds", SNOOZE_SECONDS)
+    logger.info("Trip snoozed for %ds", snooze_sec)
 
 
 async def cb_wake_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -37,6 +37,9 @@ class TripSession:
     started_at: float = field(default_factory=time.time)
     wake_sent_at: Optional[float] = None
     wake_retry_count: int = 0              # Số lần retry wake alert đã gửi
+    wake_retry_after: int = 3 * 60        # Giây chờ giữa 2 lần retry (user-configurable)
+    wake_max_retries: int = 3             # Số lần retry tối đa (user-configurable)
+    snooze_duration: int  = 5 * 60       # Giây snooze khi bấm 💤 (user-configurable)
     snooze_until: Optional[float] = None   # epoch — scheduler bỏ qua cho đến khi hết snooze
     eta_window: list = field(default_factory=list)  # Raw ETAs gần nhất (cho ETA smoothing)
 
@@ -49,12 +52,18 @@ def create_session(
     destination_name: str,
     destination_coords: tuple[float, float],
     prep_time_seconds: int,
+    wake_retry_after: int = 3 * 60,
+    wake_max_retries: int = 3,
+    snooze_duration: int  = 5 * 60,
 ) -> TripSession:
     global _session
     _session = TripSession(
         destination_name=destination_name,
         destination_coords=destination_coords,
         prep_time_seconds=prep_time_seconds,
+        wake_retry_after=wake_retry_after,
+        wake_max_retries=wake_max_retries,
+        snooze_duration=snooze_duration,
     )
     return _session
 
