@@ -366,22 +366,68 @@ async def cb_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def cmd_test_alert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Gửi thử wake alert để kiểm tra giao diện thông báo.
-    Không cần di chuyển thực tế — dùng session giả với ETA = 7 phút.
+    Demo toàn bộ chuỗi wake alert — không cần di chuyển thực tế.
+
+    Gửi 3 tin liên tiếp (cách nhau 3 giây) mô phỏng:
+      • Lần 1: Bot phát hiện sắp đến trạm, gửi cảnh báo lần đầu
+      • Lần 2: Người dùng không phản hồi → bot nhắc lại #1 (ETA gần hơn)
+      • Lần 3: Vẫn không phản hồi → bot nhắc lại #2 (ETA rất gần)
+
+    Sau mỗi tin bạn có thể bấm thử ✅ / 💤 / 🛑 để xem phản hồi.
     Gõ: /testalert
     """
+    import asyncio
     from backend.scheduler import send_wake_alert
     from backend.session_store import TripSession
 
-    fake_session = TripSession(
+    await update.message.reply_text(
+        "🧪 <b>Bắt đầu demo chuỗi wake alert</b>\n\n"
+        "Sẽ gửi 3 tin (cách nhau 3 giây) mô phỏng:\n"
+        "  1️⃣ Phát hiện sắp đến → cảnh báo lần đầu\n"
+        "  2️⃣ Không phản hồi → nhắc lại #1\n"
+        "  3️⃣ Vẫn không phản hồi → nhắc lại #2\n\n"
+        "Bạn có thể bấm thử các nút trên mỗi tin 👇",
+        parse_mode="HTML",
+    )
+
+    # --- Lần 1: phát hiện ETA ≤ prep_time, gửi cảnh báo đầu tiên ---
+    s1 = TripSession(
         destination_name="Bến Thành (TEST)",
         destination_coords=(106.6980, 10.7725),
         prep_time_seconds=300,
     )
-    fake_session.last_eta_seconds = 7 * 60  # Giả ETA = 7 phút
+    s1.last_eta_seconds = 7 * 60   # ETA 7 phút
+    s1.wake_retry_count = 0
+    await send_wake_alert(context.application, s1)
+    await asyncio.sleep(3)
 
-    await send_wake_alert(context.application, fake_session)
-    await update.message.reply_text("✅ Đã gửi thử wake alert! Test các nút bên trên nhé.")
+    # --- Lần 2: retry #1 sau 3 phút — ETA còn 5 phút ---
+    s2 = TripSession(
+        destination_name="Bến Thành (TEST)",
+        destination_coords=(106.6980, 10.7725),
+        prep_time_seconds=300,
+    )
+    s2.last_eta_seconds = 5 * 60   # ETA 5 phút (gần hơn)
+    s2.wake_retry_count = 1
+    await send_wake_alert(context.application, s2)
+    await asyncio.sleep(3)
+
+    # --- Lần 3: retry #2 — ETA còn 3 phút, gần tới rồi! ---
+    s3 = TripSession(
+        destination_name="Bến Thành (TEST)",
+        destination_coords=(106.6980, 10.7725),
+        prep_time_seconds=300,
+    )
+    s3.last_eta_seconds = 3 * 60   # ETA 3 phút (rất gần)
+    s3.wake_retry_count = 2
+    await send_wake_alert(context.application, s3)
+
+    await update.message.reply_text(
+        "✅ <b>Demo xong!</b>\n\n"
+        "Trong thực tế, mỗi lần cách nhau <b>3 phút</b>.\n"
+        "Nếu không bấm gì sau 3 lần → bot ngừng nhắc (để tránh spam).",
+        parse_mode="HTML",
+    )
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
