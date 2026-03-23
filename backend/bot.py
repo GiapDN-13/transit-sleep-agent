@@ -364,6 +364,26 @@ async def cb_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.callback_query.answer("Chức năng này chưa sẵn sàng.")
 
 
+async def cmd_test_alert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Gửi thử wake alert để kiểm tra giao diện thông báo.
+    Không cần di chuyển thực tế — dùng session giả với ETA = 7 phút.
+    Gõ: /testalert
+    """
+    from backend.scheduler import send_wake_alert
+    from backend.session_store import TripSession
+
+    fake_session = TripSession(
+        destination_name="Bến Thành (TEST)",
+        destination_coords=(106.6980, 10.7725),
+        prep_time_seconds=300,
+    )
+    fake_session.last_eta_seconds = 7 * 60  # Giả ETA = 7 phút
+
+    await send_wake_alert(context.application, fake_session)
+    await update.message.reply_text("✅ Đã gửi thử wake alert! Test các nút bên trên nhé.")
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("Unhandled exception", exc_info=context.error)
 
@@ -379,9 +399,10 @@ def build_application() -> Application:
         .build()
     )
 
-    app.add_handler(CommandHandler("start",  cmd_start))
-    app.add_handler(CommandHandler("help",   cmd_help))
-    app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("start",     cmd_start))
+    app.add_handler(CommandHandler("help",      cmd_help))
+    app.add_handler(CommandHandler("status",    cmd_status))
+    app.add_handler(CommandHandler("testalert", cmd_test_alert))
 
     # WebApp data từ Mini App pick mode
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_data))
