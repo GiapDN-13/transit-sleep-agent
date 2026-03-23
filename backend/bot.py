@@ -460,7 +460,7 @@ async def cmd_test_ntfy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 f"https://ntfy.sh/{config.NTFY_TOPIC}",
                 content="Test từ Transit Sleep Agent — ntfy hoạt động!".encode("utf-8"),
                 headers={
-                    "Title": "✅ Test ntfy thành công",
+                    "Title": "Test ntfy thanh cong",
                     "Priority": "urgent",
                     "Tags": "white_check_mark",
                     "Content-Type": "text/plain; charset=utf-8",

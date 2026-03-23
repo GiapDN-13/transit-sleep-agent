@@ -148,13 +148,13 @@ async def _send_ntfy_alert(destination_name: str, eta_min: int, retry: int) -> N
     priority = priority_map.get(retry, "max")  # retry >= 2 → "max"
 
     if retry == 0:
-        title = "⏰ Sắp đến trạm rồi!"
+        title = "Sap den tram roi!"
         tags = "alarm_clock"
     elif retry == 1:
-        title = "⏰⏰ Sắp đến! (nhắc lại #1)"
+        title = f"Sap den! (nhac lai #{retry})"
         tags = "alarm_clock,loudspeaker"
     else:
-        title = f"🚨 KHẨN CẤP — NHẮC LẦN {retry}! THỨC DẬY NGAY!"
+        title = f"KHAN CAP - NHAC LAN {retry}! THUC DAY NGAY!"
         tags = "rotating_light,alarm_clock,sos"
 
     body = f"Còn {eta_min} phút đến {destination_name}. Chuẩn bị xuống xe!"
