@@ -430,6 +430,59 @@ async def cmd_test_alert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
 
+async def cmd_test_ntfy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Gửi thử một ntfy notification để kiểm tra cấu hình.
+    Báo lại kết quả (thành công / lỗi) ngay trong Telegram.
+    Gõ: /testntfy
+    """
+    import httpx
+    from backend.config import config
+
+    if not config.NTFY_TOPIC:
+        await update.message.reply_text(
+            "❌ <b>NTFY_TOPIC chưa được cấu hình!</b>\n\n"
+            "Vào Koyeb → Service → Settings → Environment Variables\n"
+            "Thêm: <code>NTFY_TOPIC = transit-sleep-agent</code>\n"
+            "Sau đó chờ Koyeb redeploy.",
+            parse_mode="HTML",
+        )
+        return
+
+    await update.message.reply_text(
+        f"📤 Đang gửi test ntfy đến topic <code>{config.NTFY_TOPIC}</code>…",
+        parse_mode="HTML",
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"https://ntfy.sh/{config.NTFY_TOPIC}",
+                content="Test từ Transit Sleep Agent — ntfy hoạt động!".encode("utf-8"),
+                headers={
+                    "Title": "✅ Test ntfy thành công",
+                    "Priority": "urgent",
+                    "Tags": "white_check_mark",
+                    "Content-Type": "text/plain; charset=utf-8",
+                },
+            )
+            resp.raise_for_status()
+        await update.message.reply_text(
+            f"✅ <b>Gửi thành công!</b> (HTTP {resp.status_code})\n\n"
+            f"Kiểm tra điện thoại — app ntfy phải hiện thông báo.\n"
+            f"Nếu không thấy: mở app ntfy → xác nhận đã subscribe topic "
+            f"<code>{config.NTFY_TOPIC}</code>",
+            parse_mode="HTML",
+        )
+        logger.info("Test ntfy sent OK — topic=%s status=%d", config.NTFY_TOPIC, resp.status_code)
+    except Exception as exc:
+        await update.message.reply_text(
+            f"❌ <b>Gửi thất bại:</b> <code>{exc}</code>",
+            parse_mode="HTML",
+        )
+        logger.error("Test ntfy failed: %s", exc)
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("Unhandled exception", exc_info=context.error)
 
@@ -449,6 +502,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("help",      cmd_help))
     app.add_handler(CommandHandler("status",    cmd_status))
     app.add_handler(CommandHandler("testalert", cmd_test_alert))
+    app.add_handler(CommandHandler("testntfy",  cmd_test_ntfy))
 
     # WebApp data từ Mini App pick mode
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_data))
