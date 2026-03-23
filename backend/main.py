@@ -49,7 +49,8 @@ async def lifespan(app: FastAPI):
     await bot_app.initialize()
     await bot_app.start()
 
-    webhook_url = f"{config.BACKEND_URL}/telegram/webhook"
+    # rstrip("/") phòng trường hợp BACKEND_URL có trailing slash trong env vars
+    webhook_url = f"{config.BACKEND_URL.rstrip('/')}/telegram/webhook"
     await bot_app.bot.set_webhook(
         url=webhook_url,
         drop_pending_updates=True,
