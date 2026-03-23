@@ -163,11 +163,12 @@ async def _send_ntfy_alert(destination_name: str, eta_min: int, retry: int) -> N
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 f"https://ntfy.sh/{config.NTFY_TOPIC}",
-                content=body.encode(),
+                content=body.encode("utf-8"),
                 headers={
                     "Title": title,
                     "Priority": priority,
                     "Tags": tags,
+                    "Content-Type": "text/plain; charset=utf-8",
                 },
             )
             resp.raise_for_status()
