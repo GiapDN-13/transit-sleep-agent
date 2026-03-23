@@ -3,12 +3,16 @@ FastAPI application entrypoint.
 Run with: uvicorn backend.main:app --reload --port 8000
 
 Lifespan:
-  - startup  → khởi động Telegram bot polling
-  - shutdown → dừng bot gracefully
+  - startup  → đăng ký Telegram webhook, khởi động scheduler
+  - shutdown → xoá webhook, dừng bot gracefully
+
+Webhook mode (thay vì polling):
+  - Telegram push update đến POST /telegram/webhook
+  - Không conflict khi nhiều instance / redeploy
+  - Yêu cầu BACKEND_URL là HTTPS (ngrok local, Koyeb production)
 """
 import json
 import logging
-import multiprocessing
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -31,52 +35,34 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Module-level bot application (accessible from other modules for sending alerts)
+# Module-level bot application (accessible from routes for webhook processing)
 bot_app = build_application()
-
-
-def _is_reloader_process() -> bool:
-    """
-    Uvicorn --reload tạo parent "reloader" (MainProcess) và child worker (SpawnProcess-N / Process-N).
-    Chỉ start bot ở worker process để tránh duplicate polling.
-
-    Phân biệt bằng cách:
-    - Nếu là MainProcess VÀ có child process đang chạy → đây là reloader → skip bot.
-    - Nếu là MainProcess nhưng KHÔNG có child → đây là chế độ no-reload → start bot.
-    - Nếu là Process-N / SpawnProcess-N → đây là worker → start bot.
-
-    Trong thực tế, khi uvicorn dùng watchfiles (uvicorn[standard]) để reload,
-    child worker sẽ có tên khác MainProcess. Ta dùng active_children() để phát hiện.
-    """
-    proc = multiprocessing.current_process()
-    if proc.name != "MainProcess":
-        # Đây là worker process (SpawnProcess-N, Process-N...) → start bot
-        return False
-    # Là MainProcess: chỉ là reloader nếu đã spawn ít nhất 1 child worker
-    return len(multiprocessing.active_children()) > 0
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if _is_reloader_process():
-        # Reloader parent — không start bot, chỉ pass through
-        logger.info("Reloader process detected — skipping bot startup.")
-        yield
-        return
-
-    logger.info("Starting Telegram bot polling...")
+    """
+    Webhook mode — không cần phân biệt reloader/worker vì không có polling.
+    Telegram tự push update đến /telegram/webhook → không conflict.
+    """
+    logger.info("Initializing Telegram bot (webhook mode)...")
     await bot_app.initialize()
     await bot_app.start()
-    await bot_app.updater.start_polling(drop_pending_updates=True)
-    logger.info("Bot is polling. Send /start to your bot on Telegram.")
+
+    webhook_url = f"{config.BACKEND_URL}/telegram/webhook"
+    await bot_app.bot.set_webhook(
+        url=webhook_url,
+        drop_pending_updates=True,
+    )
+    logger.info("Webhook registered: %s", webhook_url)
 
     scheduler_task = start_scheduler(bot_app)
 
     yield  # App runs here
 
     scheduler_task.cancel()
-    logger.info("Stopping Telegram bot...")
-    await bot_app.updater.stop()
+    logger.info("Removing Telegram webhook...")
+    await bot_app.bot.delete_webhook()
     await bot_app.stop()
     await bot_app.shutdown()
     logger.info("Bot stopped.")

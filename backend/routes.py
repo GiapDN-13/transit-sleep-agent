@@ -2,6 +2,7 @@
 FastAPI route handlers.
 
 Endpoints:
+  POST /telegram/webhook — nhận Telegram updates (webhook mode, thay polling)
   GET  /session/current  — trả thông tin session hiện tại (Mini App dùng khi load)
   POST /trips/start      — nhận GPS đầu tiên, kích hoạt session
   POST /gps/update       — Mini App push GPS định kỳ (mỗi 30s)
@@ -9,8 +10,9 @@ Endpoints:
 """
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from telegram import Update
 
 import backend.session_store as store
 from backend.session_store import TripStatus
@@ -77,6 +79,21 @@ def _require_active_session() -> store.TripSession:
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+
+@router.post("/telegram/webhook")
+async def telegram_webhook(request: Request):
+    """
+    Nhận Telegram updates qua webhook (production mode).
+    Telegram POST json payload đến đây mỗi khi có message / callback.
+    Lazy import backend.main để tránh circular import.
+    """
+    import backend.main as m  # noqa: PLC0415
+
+    data = await request.json()
+    update = Update.de_json(data, m.bot_app.bot)
+    await m.bot_app.process_update(update)
+    return {"ok": True}
 
 
 @router.get("/session/current", response_model=SessionResponse)
