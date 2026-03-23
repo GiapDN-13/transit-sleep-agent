@@ -129,50 +129,70 @@ async def _send_voice_alert(bot_app: Application, destination_name: str, eta_min
         logger.error("Failed to send voice alert: %s", exc)
 
 
+async def _ntfy_post(title: str, body: str, priority: str, tags: str) -> None:
+    """Gửi một ntfy notification, raise nếu lỗi."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(
+            f"https://ntfy.sh/{config.NTFY_TOPIC}",
+            content=body.encode("utf-8"),
+            headers={
+                "Title": title,
+                "Priority": priority,
+                "Tags": tags,
+                "Content-Type": "text/plain; charset=utf-8",
+            },
+        )
+        resp.raise_for_status()
+
+
 async def _send_ntfy_alert(destination_name: str, eta_min: int, retry: int) -> None:
     """
     Gửi push notification qua ntfy.sh — bypass chế độ im lặng / DND trên Android.
 
     Priority mapping:
       retry 0 → high    (notification bình thường, có âm thanh)
-      retry 1 → urgent  (notification ưu tiên cao, bypass DND)
-      retry 2 → max     (alarm toàn màn hình, kêu liên tục cho đến khi tắt)
+      retry 1 → urgent  (bypass DND)
+      retry 2 → max x5  (5 ping cách nhau 4 giây → loop như báo thức ~20 giây)
 
     Yêu cầu: cài app ntfy trên điện thoại + subscribe đúng topic.
-    Không cần tài khoản, hoàn toàn miễn phí.
+    Trong app ntfy: subscription settings → chọn âm thanh "alarm" + bật DND override.
     """
     if not config.NTFY_TOPIC:
         return
 
-    priority_map = {0: "high", 1: "urgent"}
-    priority = priority_map.get(retry, "max")  # retry >= 2 → "max"
-
     if retry == 0:
         title = "Sap den tram roi!"
         tags = "alarm_clock"
+        priority = "high"
     elif retry == 1:
         title = f"Sap den! (nhac lai #{retry})"
         tags = "alarm_clock,loudspeaker"
+        priority = "urgent"
     else:
-        title = f"KHAN CAP - NHAC LAN {retry}! THUC DAY NGAY!"
+        title = f"KHAN CAP - THUC DAY NGAY! (lan {retry})"
         tags = "rotating_light,alarm_clock,sos"
+        priority = "max"
 
-    body = f"Còn {eta_min} phút đến {destination_name}. Chuẩn bị xuống xe!"
+    body = f"Con {eta_min} phut den {destination_name}. Chuan bi xuong xe!"
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f"https://ntfy.sh/{config.NTFY_TOPIC}",
-                content=body.encode("utf-8"),
-                headers={
-                    "Title": title,
-                    "Priority": priority,
-                    "Tags": tags,
-                    "Content-Type": "text/plain; charset=utf-8",
-                },
+        if retry >= 2:
+            # Gửi 5 ping liên tiếp, cách nhau 4 giây → ~20 giây kêu như báo thức
+            ALARM_PINGS   = 5
+            ALARM_INTERVAL = 4  # giây
+
+            logger.info(
+                "ntfy alarm loop: %d pings × %ds — topic=%s",
+                ALARM_PINGS, ALARM_INTERVAL, config.NTFY_TOPIC,
             )
-            resp.raise_for_status()
-        logger.info("ntfy alert sent (priority=%s) — topic=%s", priority, config.NTFY_TOPIC)
+            for i in range(ALARM_PINGS):
+                ping_title = f"{title} ({i + 1}/{ALARM_PINGS})"
+                await _ntfy_post(ping_title, body, priority, tags)
+                if i < ALARM_PINGS - 1:
+                    await asyncio.sleep(ALARM_INTERVAL)
+        else:
+            await _ntfy_post(title, body, priority, tags)
+            logger.info("ntfy alert sent (priority=%s) — topic=%s", priority, config.NTFY_TOPIC)
     except Exception as exc:
         logger.error("Failed to send ntfy alert: %s", exc)
 
