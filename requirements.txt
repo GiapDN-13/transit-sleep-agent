@@ -1,0 +1,15 @@
+# Telegram
+python-telegram-bot==21.9
+
+# Web framework
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+
+# ORS routing
+openrouteservice==2.3.3
+
+# HTTP client (async)
+httpx==0.28.1
+
+# Config
+python-dotenv==1.1.0

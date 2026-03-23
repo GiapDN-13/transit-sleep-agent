@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>Transit Sleep Agent</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    :root {
+      --bg:       var(--tg-theme-bg-color, #1c1c1e);
+      --surface:  var(--tg-theme-secondary-bg-color, #2c2c2e);
+      --text:     var(--tg-theme-text-color, #ffffff);
+      --hint:     var(--tg-theme-hint-color, #8e8e93);
+      --accent:   var(--tg-theme-button-color, #2979ff);
+      --accent-t: var(--tg-theme-button-text-color, #ffffff);
+      --danger:   #ff453a;
+      --success:  #30d158;
+      --radius:   14px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---- SHARED ---- */
+    .screen { display: none; flex-direction: column; height: 100%; }
+    .screen.active { display: flex; }
+
+    .card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      margin: 0 12px 10px;
+    }
+    .card-label {
+      font-size: 11px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: .06em;
+      color: var(--hint); margin-bottom: 4px;
+    }
+    .card-value { font-size: 17px; font-weight: 600; }
+
+    .btn {
+      width: calc(100% - 24px); margin: 0 12px;
+      padding: 15px; border: none; border-radius: var(--radius);
+      font-size: 16px; font-weight: 600; cursor: pointer;
+      transition: opacity .15s;
+    }
+    .btn:active  { opacity: .75; }
+    .btn:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-primary   { background: var(--accent); color: var(--accent-t); }
+    .btn-secondary { background: var(--surface); color: var(--text); }
+
+    /* ---- PICK MODE ---- */
+    #screen-pick { position: relative; }
+
+    #pick-map {
+      flex: 1;
+      z-index: 1;
+      /* override Leaflet's default grey */
+      background: #2c2c2e;
+    }
+
+    #pick-bottom {
+      background: var(--bg);
+      padding: 12px 0 8px;
+      flex-shrink: 0;
+    }
+
+    #pick-dest-card { margin-bottom: 10px; }
+    #pick-dest-name { font-size: 15px; font-weight: 600; }
+    #pick-dest-sub  { font-size: 12px; color: var(--hint); margin-top: 2px; }
+
+    #pick-presets {
+      display: flex; gap: 8px;
+      overflow-x: auto; padding: 0 12px 10px;
+      scrollbar-width: none;
+    }
+    #pick-presets::-webkit-scrollbar { display: none; }
+    .preset-chip {
+      flex-shrink: 0;
+      background: var(--surface);
+      border: 1.5px solid transparent;
+      border-radius: 20px;
+      padding: 6px 14px;
+      font-size: 13px; font-weight: 500;
+      cursor: pointer; white-space: nowrap;
+      transition: border-color .15s;
+    }
+    .preset-chip.selected {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* ---- TRACK MODE ---- */
+    #screen-track {
+      overflow-y: auto;
+      padding: 20px 0 32px;
+      align-items: center;
+    }
+    #screen-track h1 {
+      font-size: 20px; font-weight: 700;
+      text-align: center; margin-bottom: 4px;
+    }
+    #screen-track .subtitle {
+      font-size: 13px; color: var(--hint);
+      text-align: center; margin-bottom: 20px;
+    }
+    .track-card { width: calc(100% - 24px); }
+    .eta-value  { font-size: 32px; font-weight: 700; }
+    .eta-value.far      { color: var(--accent); }
+    .eta-value.warn     { color: #ffd60a; }
+    .eta-value.critical { color: var(--danger); }
+
+    .status-row { display: flex; align-items: center; gap: 10px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .dot.pending { background: var(--hint); }
+    .dot.loading { background: #ffd60a; animation: blink 1s infinite; }
+    .dot.ok      { background: var(--success); }
+    .dot.error   { background: var(--danger); }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    .banner {
+      display: none; width: calc(100% - 24px); margin: 0 12px 10px;
+      border-radius: var(--radius); padding: 13px 16px;
+      font-size: 14px; text-align: center; line-height: 1.5;
+    }
+    .banner.error   { background: rgba(255,69,58,.15); border: 1px solid var(--danger);  color: var(--danger); }
+    .banner.success { background: rgba(48,209,88,.12); border: 1px solid var(--success); color: var(--success); }
+    .banner.show { display: block; }
+
+    .gps-badge {
+      display: none; margin-top: 8px;
+      font-size: 11px; color: var(--accent);
+      background: rgba(41,121,255,.15);
+      border-radius: 20px; padding: 2px 10px;
+      width: fit-content;
+    }
+    .gps-badge.show { display: inline-block; }
+  </style>
+</head>
+<body>
+
+<!-- ===================== PICK MODE ===================== -->
+<div id="screen-pick" class="screen">
+  <div id="pick-map"></div>
+  <div id="pick-bottom">
+    <!-- Preset chips -->
+    <div id="pick-presets"></div>
+
+    <!-- Selected dest info -->
+    <div class="card" id="pick-dest-card">
+      <div class="card-label">Điểm xuống đã chọn</div>
+      <div id="pick-dest-name">Chưa chọn — nhấn vào bản đồ hoặc chọn nhanh bên trên</div>
+      <div id="pick-dest-sub"></div>
+    </div>
+
+    <button class="btn btn-primary" id="btn-confirm-dest" disabled>
+      ✓ Xác nhận điểm xuống
+    </button>
+  </div>
+</div>
+
+<!-- ===================== TRACK MODE ===================== -->
+<div id="screen-track" class="screen">
+  <h1>🚌 Transit Sleep Agent</h1>
+  <p class="subtitle">Theo dõi hành trình, báo thức đúng trạm</p>
+
+  <div class="card track-card" style="margin-bottom:10px">
+    <div class="card-label">Điểm xuống</div>
+    <div class="card-value" id="track-dest-name">Đang tải...</div>
+  </div>
+
+  <div class="card track-card" style="margin-bottom:10px">
+    <div class="card-label">Báo thức trước</div>
+    <div class="card-value" id="track-prep">—</div>
+  </div>
+
+  <div class="card track-card" style="margin-bottom:10px">
+    <div class="card-label">ETA đến nơi</div>
+    <div class="eta-value far" id="track-eta">—</div>
+  </div>
+
+  <div class="card track-card" style="margin-bottom:10px">
+    <div class="card-label">GPS</div>
+    <div class="status-row">
+      <div class="dot pending" id="gps-dot"></div>
+      <span id="gps-status">Chưa lấy vị trí</span>
+    </div>
+    <div class="gps-badge" id="gps-badge">Cập nhật mỗi 30s</div>
+  </div>
+
+  <div class="banner error"   id="track-error"></div>
+  <div class="banner success" id="track-success"></div>
+
+  <button class="btn btn-primary"   id="btn-start-track" disabled style="margin-bottom:10px">
+    📍 Lấy vị trí &amp; Bắt đầu
+  </button>
+  <button class="btn btn-secondary" id="btn-close-track" style="display:none">
+    ✓ Đóng — hành trình đang chạy
+  </button>
+</div>
+
+<!-- ===================== SCRIPT ===================== -->
+<script>
+  const tg = window.Telegram.WebApp;
+  tg.ready();
+  tg.expand();
+
+  const BACKEND         = window.BACKEND_URL || window.location.origin;
+  const GPS_INTERVAL_MS = 30_000;
+  const PRESETS         = window.PRESET_DESTINATIONS || [];
+
+  // Parse mode from URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const MODE = urlParams.get('mode') || 'pick';
+
+  // Show correct screen
+  document.getElementById('screen-pick').classList.toggle('active', MODE === 'pick');
+  document.getElementById('screen-track').classList.toggle('active', MODE === 'track');
+
+  // ===========================================================
+  // PICK MODE
+  // ===========================================================
+  if (MODE === 'pick') {
+    let selectedDest = null;   // { name, lat, lon }
+    let pinMarker    = null;
+    let userMarker   = null;
+
+    // -- Init map --
+    const map = L.map('pick-map', { zoomControl: true, attributionControl: false });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+    }).addTo(map);
+
+    // Custom icons
+    const pinIcon = L.divIcon({
+      className: '',
+      html: '<div style="font-size:28px;line-height:1;filter:drop-shadow(0 2px 4px rgba(0,0,0,.5))">📍</div>',
+      iconAnchor: [14, 28],
+    });
+    const presetIcon = L.divIcon({
+      className: '',
+      html: '<div style="font-size:22px;line-height:1">🚏</div>',
+      iconAnchor: [11, 22],
+    });
+    const myLocIcon = L.divIcon({
+      className: '',
+      html: '<div style="width:14px;height:14px;background:#2979ff;border:3px solid #fff;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,.4)"></div>',
+      iconAnchor: [7, 7],
+    });
+
+    // -- Preset markers --
+    const presetChipsEl = document.getElementById('pick-presets');
+    PRESETS.forEach((p, i) => {
+      // Map marker
+      const m = L.marker([p.lat, p.lon], { icon: presetIcon })
+        .addTo(map)
+        .bindPopup(`<b>${p.name}</b>`);
+      m.on('click', () => selectDest(p.name, p.lat, p.lon, i));
+
+      // Chip
+      const chip = document.createElement('div');
+      chip.className = 'preset-chip';
+      chip.textContent = p.name;
+      chip.dataset.idx = i;
+      chip.addEventListener('click', () => {
+        map.setView([p.lat, p.lon], 16);
+        selectDest(p.name, p.lat, p.lon, i);
+      });
+      presetChipsEl.appendChild(chip);
+    });
+
+    // Default view: HCMC
+    map.setView([10.7769, 106.7009], 13);
+
+    // -- Try to show user location --
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(pos => {
+        const { latitude: lat, longitude: lon } = pos.coords;
+        userMarker = L.marker([lat, lon], { icon: myLocIcon }).addTo(map);
+        map.setView([lat, lon], 14);
+      }, () => {});
+    }
+
+    // -- Tap on map → place custom pin --
+    map.on('click', async e => {
+      const { lat, lng: lon } = e.latlng;
+      placePinAt(lat, lon);
+      const name = await reverseGeocode(lat, lon);
+      selectDest(name, lat, lon, null);
+    });
+
+    function placePinAt(lat, lon) {
+      if (pinMarker) map.removeLayer(pinMarker);
+      pinMarker = L.marker([lat, lon], { icon: pinIcon }).addTo(map);
+    }
+
+    function selectDest(name, lat, lon, presetIdx) {
+      selectedDest = { name, lat, lon };
+
+      document.getElementById('pick-dest-name').textContent = name;
+      document.getElementById('pick-dest-sub').textContent =
+        `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+      document.getElementById('btn-confirm-dest').disabled = false;
+
+      // Highlight chip
+      document.querySelectorAll('.preset-chip').forEach(c => c.classList.remove('selected'));
+      if (presetIdx !== null) {
+        document.querySelectorAll('.preset-chip')[presetIdx]?.classList.add('selected');
+      }
+    }
+
+    async function reverseGeocode(lat, lon) {
+      try {
+        const r = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=17&accept-language=vi`,
+          { headers: { 'Accept-Language': 'vi' } }
+        );
+        const d = await r.json();
+        // Try to get a short, human-readable name
+        const a = d.address || {};
+        return (
+          a.amenity || a.shop || a.building ||
+          a.road || a.suburb || a.quarter ||
+          d.display_name?.split(',')[0] ||
+          `${lat.toFixed(4)}, ${lon.toFixed(4)}`
+        );
+      } catch {
+        return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+      }
+    }
+
+    // -- Confirm button → sendData → bot receives destination --
+    document.getElementById('btn-confirm-dest').addEventListener('click', () => {
+      if (!selectedDest) return;
+      tg.sendData(JSON.stringify(selectedDest));
+    });
+  }
+
+  // ===========================================================
+  // TRACK MODE
+  // ===========================================================
+  if (MODE === 'track') {
+    let prepTimeSeconds = 0;
+    let gpsIntervalId   = null;
+
+    const elDestName  = document.getElementById('track-dest-name');
+    const elPrep      = document.getElementById('track-prep');
+    const elEta       = document.getElementById('track-eta');
+    const elGpsDot    = document.getElementById('gps-dot');
+    const elGpsStatus = document.getElementById('gps-status');
+    const elGpsBadge  = document.getElementById('gps-badge');
+    const elError     = document.getElementById('track-error');
+    const elSuccess   = document.getElementById('track-success');
+    const btnStart    = document.getElementById('btn-start-track');
+    const btnClose    = document.getElementById('btn-close-track');
+
+    function setGps(state, text) {
+      elGpsDot.className = `dot ${state}`;
+      elGpsStatus.textContent = text;
+    }
+    function showBanner(el, msg) {
+      elError.classList.remove('show'); elSuccess.classList.remove('show');
+      el.textContent = msg; el.classList.add('show');
+    }
+    function fmtSec(s) {
+      if (s == null) return '—';
+      const m = Math.round(s / 60);
+      if (m < 1) return 'Sắp đến!';
+      return m < 60 ? `${m} phút` : `${Math.floor(m/60)}h ${m%60}m`;
+    }
+    function fmtPrep(s) {
+      const m = Math.round(s / 60);
+      return m === 1 ? '1 phút' : `${m} phút`;
+    }
+    function updateEta(sec) {
+      elEta.textContent = fmtSec(sec);
+      elEta.className = 'eta-value';
+      if (sec == null) return;
+      if (sec <= prepTimeSeconds)           elEta.classList.add('critical');
+      else if (sec <= prepTimeSeconds * 2)  elEta.classList.add('warn');
+      else                                  elEta.classList.add('far');
+    }
+
+    async function loadSession() {
+      try {
+        const r = await fetch(`${BACKEND}/session/current`);
+        if (!r.ok) {
+          const e = await r.json().catch(() => ({}));
+          showBanner(elError, e.detail || 'Chua co hanh trinh. Hay chon diem xuong trong bot truoc.');
+          return false;
+        }
+        const d = await r.json();
+        elDestName.textContent = d.destination_name;
+        prepTimeSeconds        = d.prep_time_seconds;
+        elPrep.textContent     = fmtPrep(prepTimeSeconds);
+        return true;
+      } catch {
+        showBanner(elError, 'Khong ket noi duoc backend. Kiem tra ngrok dang chay chua.');
+        return false;
+      }
+    }
+
+    function getGps() {
+      return new Promise((resolve, reject) => {
+        if (!navigator.geolocation) { reject(new Error('Trinh duyet khong ho tro GPS.')); return; }
+        navigator.geolocation.getCurrentPosition(
+          p => resolve(p.coords),
+          e => reject(new Error(gpsMsg(e))),
+          { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
+        );
+      });
+    }
+    function gpsMsg(e) {
+      return [,'Chua cap quyen GPS.','Khong xac dinh duoc vi tri.','GPS qua lam.'][e.code] || 'Loi GPS.';
+    }
+
+    async function postGps(ep, lat, lon) {
+      const r = await fetch(`${BACKEND}/${ep}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lat, lon }),
+      });
+      if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.detail || 'Loi server.'); }
+      return r.json();
+    }
+
+    async function gpsTick() {
+      try {
+        const c = await getGps();
+        setGps('ok', `${c.latitude.toFixed(5)}, ${c.longitude.toFixed(5)}`);
+        const res = await postGps('gps/update', c.latitude, c.longitude);
+        if (res.eta_seconds != null) updateEta(res.eta_seconds);
+      } catch (e) {
+        setGps('error', 'Loi cap nhat GPS');
+        console.warn('GPS tick:', e.message);
+      }
+    }
+
+    function startPolling() {
+      elGpsBadge.classList.add('show');
+      gpsTick();
+      gpsIntervalId = setInterval(gpsTick, GPS_INTERVAL_MS);
+    }
+
+    btnStart.addEventListener('click', async () => {
+      btnStart.disabled = true;
+      elError.classList.remove('show');
+      try {
+        setGps('loading', 'Dang xac dinh vi tri...');
+        const c = await getGps();
+        setGps('ok', `${c.latitude.toFixed(5)}, ${c.longitude.toFixed(5)}`);
+        setGps('loading', 'Dang gui len server...');
+        await postGps('trips/start', c.latitude, c.longitude);
+        setGps('ok', `${c.latitude.toFixed(5)}, ${c.longitude.toFixed(5)}`);
+        showBanner(elSuccess, 'Dang theo doi hanh trinh. Ban co the khoa man hinh — bot se bao thuc khi gan den.');
+        btnStart.style.display = 'none';
+        btnClose.style.display = 'block';
+        startPolling();
+      } catch (e) {
+        setGps('error', 'That bai');
+        showBanner(elError, e.message);
+        btnStart.disabled = false;
+      }
+    });
+
+    btnClose.addEventListener('click', () => tg.close());
+
+    (async () => {
+      const ok = await loadSession();
+      if (ok) btnStart.disabled = false;
+    })();
+  }
+</script>
+</body>
+</html>

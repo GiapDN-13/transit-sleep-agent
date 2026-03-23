@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Secrets — KHÔNG bao giờ đưa vào image
+.env
+.env.*
+!.env.example
+
+# Tests & docs — không cần trong production image
+tests/
+docs/
+
+# Dev tools
+.git/
+.gitignore
+.cursorignore
+.cursorindexingignore
+
+# Local scripts
+start.ps1
+draw_maps.py
+ban_do_cua_toi.html
+
+# Misc
+*.md
+README.md
+LICENSE
