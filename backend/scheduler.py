@@ -11,6 +11,9 @@ M2 improvements:
       → cần ít nhất ⌈N/2⌉ lần đo liên tiếp < prep_time để trigger alert
   - Wake alert retry: nếu user không ack sau WAKE_RETRY_AFTER giây,
       gửi lại tối đa WAKE_MAX_RETRIES lần
+  - Escalation spam khi người dùng không phản hồi:
+      retry #1 → spam 3 tin ⏰ (cách nhau 1 giây)
+      retry #2 → spam 5 tin 🚨 (cách nhau 0.5 giây) + nhắn gọi điện
 """
 import asyncio
 import logging
@@ -76,12 +79,36 @@ def _wake_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+async def _spam_ping(bot_app: Application, count: int, emoji: str, delay: float) -> None:
+    """Gửi liên tiếp `count` tin nhắn ngắn để kích notification nhiều lần."""
+    for i in range(count):
+        await bot_app.bot.send_message(
+            chat_id=config.OWNER_CHAT_ID,
+            text=emoji,
+        )
+        if i < count - 1:
+            await asyncio.sleep(delay)
+
+
 async def send_wake_alert(bot_app: Application, session: store.TripSession) -> None:
-    """Gửi tin nhắn cảnh báo đến OWNER_CHAT_ID."""
+    """
+    Gửi tin nhắn cảnh báo đến OWNER_CHAT_ID, có leo thang theo retry:
+      - retry 0: alert bình thường
+      - retry 1: alert + spam 3 ⏰ (1 giây/tin) → nhiều notification hơn
+      - retry 2+: alert + spam 5 🚨 (0.5 giây/tin) + nhắn gọi điện khẩn
+    """
     eta_min = round((session.last_eta_seconds or 0) / 60)
-    retry_note = f" (nhắc lại #{session.wake_retry_count})" if session.wake_retry_count > 0 else ""
+    retry = session.wake_retry_count
+
+    if retry == 0:
+        header = "⏰ <b>SẮP ĐẾN TRẠM!</b>"
+    elif retry == 1:
+        header = "⏰⏰ <b>SẮP ĐẾN TRẠM! (nhắc lại #1)</b>"
+    else:
+        header = f"🚨🚨 <b>KHẨN CẤP — NHẮC LẦN {retry}!</b> 🚨🚨"
+
     text = (
-        f"⏰ <b>SẮP ĐẾN TRẠM!</b>{retry_note}\n\n"
+        f"{header}\n\n"
         f"📍 Điểm xuống: <b>{session.destination_name}</b>\n"
         f"🕐 ETA còn khoảng: <b>{eta_min} phút</b>\n\n"
         f"Bạn muốn làm gì?"
@@ -92,9 +119,29 @@ async def send_wake_alert(bot_app: Application, session: store.TripSession) -> N
         reply_markup=_wake_keyboard(),
         parse_mode="HTML",
     )
+
+    # Leo thang: spam thêm tin để trigger nhiều notification
+    if retry == 1:
+        await asyncio.sleep(0.5)
+        await _spam_ping(bot_app, count=3, emoji="⏰", delay=1.0)
+    elif retry >= 2:
+        await asyncio.sleep(0.5)
+        await _spam_ping(bot_app, count=5, emoji="🚨", delay=0.5)
+        await bot_app.bot.send_message(
+            chat_id=config.OWNER_CHAT_ID,
+            text=(
+                "📞 <b>Bạn có vẻ đang ngủ quá say!</b>\n\n"
+                "Nhờ ai đó gọi điện đánh thức bạn,\n"
+                "hoặc bấm nút bên trên nếu đã dậy."
+            ),
+            parse_mode="HTML",
+        )
+
     logger.info(
-        "Wake alert sent (retry=%d) — eta=%.0fs",
-        session.wake_retry_count, session.last_eta_seconds or 0,
+        "Wake alert sent (retry=%d, escalation=%s) — eta=%.0fs",
+        retry,
+        "none" if retry == 0 else f"spam×{'3' if retry == 1 else '5'}",
+        session.last_eta_seconds or 0,
     )
 
 
