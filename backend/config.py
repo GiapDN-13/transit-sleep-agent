@@ -44,6 +44,9 @@ class Config:
     BACKEND_URL: str = _ensure_https("BACKEND_URL", _require("BACKEND_URL"))
     MINI_APP_URL: str = _ensure_https("MINI_APP_URL", _require("MINI_APP_URL"))
     OWNER_CHAT_ID: int = int(_require("OWNER_CHAT_ID"))
+    # ntfy.sh push notification (tuỳ chọn — để trống thì bỏ qua)
+    # Cài app ntfy trên điện thoại, subscribe topic này để nhận alarm
+    NTFY_TOPIC: str | None = os.getenv("NTFY_TOPIC") or None
 
 
 config = Config()

@@ -12,8 +12,9 @@ M2 improvements:
   - Wake alert retry: nếu user không ack sau WAKE_RETRY_AFTER giây,
       gửi lại tối đa WAKE_MAX_RETRIES lần
   - Escalation spam khi người dùng không phản hồi:
-      retry #1 → spam 3 tin ⏰ (cách nhau 1 giây)
-      retry #2 → spam 5 tin 🚨 (cách nhau 0.5 giây) + nhắn gọi điện
+      retry #0 → ntfy priority=high
+      retry #1 → spam 3 tin ⏰ + ntfy priority=urgent (bypass DND)
+      retry #2 → spam 5 tin 🚨 + voice TTS + ntfy priority=max (alarm toàn màn hình)
 """
 import asyncio
 import io
@@ -21,6 +22,7 @@ import logging
 import statistics
 import time
 
+import httpx
 from gtts import gTTS
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application
@@ -127,6 +129,53 @@ async def _send_voice_alert(bot_app: Application, destination_name: str, eta_min
         logger.error("Failed to send voice alert: %s", exc)
 
 
+async def _send_ntfy_alert(destination_name: str, eta_min: int, retry: int) -> None:
+    """
+    Gửi push notification qua ntfy.sh — bypass chế độ im lặng / DND trên Android.
+
+    Priority mapping:
+      retry 0 → high    (notification bình thường, có âm thanh)
+      retry 1 → urgent  (notification ưu tiên cao, bypass DND)
+      retry 2 → max     (alarm toàn màn hình, kêu liên tục cho đến khi tắt)
+
+    Yêu cầu: cài app ntfy trên điện thoại + subscribe đúng topic.
+    Không cần tài khoản, hoàn toàn miễn phí.
+    """
+    if not config.NTFY_TOPIC:
+        return
+
+    priority_map = {0: "high", 1: "urgent"}
+    priority = priority_map.get(retry, "max")  # retry >= 2 → "max"
+
+    if retry == 0:
+        title = "⏰ Sắp đến trạm rồi!"
+        tags = "alarm_clock"
+    elif retry == 1:
+        title = "⏰⏰ Sắp đến! (nhắc lại #1)"
+        tags = "alarm_clock,loudspeaker"
+    else:
+        title = f"🚨 KHẨN CẤP — NHẮC LẦN {retry}! THỨC DẬY NGAY!"
+        tags = "rotating_light,alarm_clock,sos"
+
+    body = f"Còn {eta_min} phút đến {destination_name}. Chuẩn bị xuống xe!"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"https://ntfy.sh/{config.NTFY_TOPIC}",
+                content=body.encode(),
+                headers={
+                    "Title": title,
+                    "Priority": priority,
+                    "Tags": tags,
+                },
+            )
+            resp.raise_for_status()
+        logger.info("ntfy alert sent (priority=%s) — topic=%s", priority, config.NTFY_TOPIC)
+    except Exception as exc:
+        logger.error("Failed to send ntfy alert: %s", exc)
+
+
 async def send_wake_alert(bot_app: Application, session: store.TripSession) -> None:
     """
     Gửi tin nhắn cảnh báo đến OWNER_CHAT_ID, có leo thang theo retry:
@@ -157,7 +206,10 @@ async def send_wake_alert(bot_app: Application, session: store.TripSession) -> N
         parse_mode="HTML",
     )
 
-    # Leo thang: spam thêm tin để trigger nhiều notification
+    # ntfy push notification — mọi retry đều gửi, priority tăng dần
+    await _send_ntfy_alert(session.destination_name, eta_min, retry)
+
+    # Leo thang Telegram: spam thêm tin để trigger nhiều notification
     if retry == 1:
         await asyncio.sleep(0.5)
         await _spam_ping(bot_app, count=3, emoji="⏰", delay=1.0)
@@ -168,8 +220,9 @@ async def send_wake_alert(bot_app: Application, session: store.TripSession) -> N
         await _send_voice_alert(bot_app, session.destination_name, eta_min)
 
     logger.info(
-        "Wake alert sent (retry=%d, escalation=%s) — eta=%.0fs",
+        "Wake alert sent (retry=%d, ntfy=%s, escalation=%s) — eta=%.0fs",
         retry,
+        "yes" if config.NTFY_TOPIC else "skip",
         "none" if retry == 0 else f"spam×{'3' if retry == 1 else '5'}",
         session.last_eta_seconds or 0,
     )
