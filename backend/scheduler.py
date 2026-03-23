@@ -16,10 +16,12 @@ M2 improvements:
       retry #2 → spam 5 tin 🚨 (cách nhau 0.5 giây) + nhắn gọi điện
 """
 import asyncio
+import io
 import logging
 import statistics
 import time
 
+from gtts import gTTS
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application
 
@@ -90,6 +92,41 @@ async def _spam_ping(bot_app: Application, count: int, emoji: str, delay: float)
             await asyncio.sleep(delay)
 
 
+async def _send_voice_alert(bot_app: Application, destination_name: str, eta_min: int) -> None:
+    """
+    Tạo voice message TTS tiếng Việt và gửi đến OWNER_CHAT_ID.
+    Telegram sẽ tự phát âm thanh — hiệu quả như một cuộc gọi.
+    Chạy gTTS trong executor để không block event loop.
+    """
+    text = (
+        f"Thức dậy! Thức dậy! "
+        f"Còn khoảng {eta_min} phút nữa là đến {destination_name}. "
+        f"Hãy chuẩn bị xuống xe ngay!"
+    )
+
+    loop = asyncio.get_event_loop()
+
+    def _generate_mp3() -> bytes:
+        buf = io.BytesIO()
+        gTTS(text=text, lang="vi").write_to_fp(buf)
+        buf.seek(0)
+        return buf.read()
+
+    try:
+        mp3_bytes = await loop.run_in_executor(None, _generate_mp3)
+        audio_buf = io.BytesIO(mp3_bytes)
+        audio_buf.name = "wake_alert.mp3"
+        await bot_app.bot.send_voice(
+            chat_id=config.OWNER_CHAT_ID,
+            voice=audio_buf,
+            caption="🔊 <b>Tin nhắn thoại khẩn cấp</b>",
+            parse_mode="HTML",
+        )
+        logger.info("Voice alert sent via gTTS — text: %s", text)
+    except Exception as exc:
+        logger.error("Failed to send voice alert: %s", exc)
+
+
 async def send_wake_alert(bot_app: Application, session: store.TripSession) -> None:
     """
     Gửi tin nhắn cảnh báo đến OWNER_CHAT_ID, có leo thang theo retry:
@@ -127,15 +164,8 @@ async def send_wake_alert(bot_app: Application, session: store.TripSession) -> N
     elif retry >= 2:
         await asyncio.sleep(0.5)
         await _spam_ping(bot_app, count=5, emoji="🚨", delay=0.5)
-        await bot_app.bot.send_message(
-            chat_id=config.OWNER_CHAT_ID,
-            text=(
-                "📞 <b>Bạn có vẻ đang ngủ quá say!</b>\n\n"
-                "Nhờ ai đó gọi điện đánh thức bạn,\n"
-                "hoặc bấm nút bên trên nếu đã dậy."
-            ),
-            parse_mode="HTML",
-        )
+        # Gửi voice message TTS — phát tiếng nói to qua loa điện thoại
+        await _send_voice_alert(bot_app, session.destination_name, eta_min)
 
     logger.info(
         "Wake alert sent (retry=%d, escalation=%s) — eta=%.0fs",
