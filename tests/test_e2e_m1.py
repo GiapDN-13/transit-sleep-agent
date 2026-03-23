@@ -109,8 +109,9 @@ def test_full_trip_flow(client, bot_app):
     dest = DESTINATION_MAP["ben_thanh"]
     store.create_session(dest.name, dest.coords, prep_time_seconds=300)
     s = store.get_session()
-    assert s is not None and s.status == TripStatus.ACTIVE
-    ok("Session created (dest+prep)")
+    # M2: session bắt đầu ở IDLE, chờ GPS đầu tiên từ Mini App
+    assert s is not None and s.status == TripStatus.IDLE
+    ok("Session created (dest+prep) → status=IDLE")
 
     # 2. GET /session/current
     r = client.get("/session/current")
@@ -120,11 +121,13 @@ def test_full_trip_flow(client, bot_app):
     assert d["prep_time_seconds"] == 300
     ok(f"GET /session/current -> prep=300s, status={d['status']}")
 
-    # 3. POST /trips/start (first GPS from Mini App)
+    # 3. POST /trips/start (first GPS from Mini App) → IDLE → ACTIVE
     r = client.post("/trips/start", json={"lat": 10.7725, "lon": 106.6980})
     assert r.status_code == 200 and r.json()["ok"] is True
     assert store.get_session().last_lat == 10.7725
-    ok("POST /trips/start -> GPS saved, ok=True")
+    # M2: /trips/start transitions IDLE → ACTIVE
+    assert store.get_session().status == TripStatus.ACTIVE
+    ok("POST /trips/start → IDLE→ACTIVE, GPS saved, ok=True")
 
     # 4. POST /gps/update (Mini App interval push, ETA far)
     eta_far = {"eta_seconds": 900.0, "distance_meters": 2500.0}
@@ -151,9 +154,19 @@ def test_full_trip_flow(client, bot_app):
     ok("Scheduler tick (ETA far=900s) -> no alert, status=ACTIVE")
 
     # 7. Scheduler tick: ETA close -> WAKING + alert sent
+    #    M2 (ETA smoothing): cần ít nhất 2 ticks với ETA gần để median window đạt <= prep_time
+    #    Sau tick xa (900s) ở bước 6, eta_window=[900].
+    #    Tick 7a: window=[900, 120], median=510 > 300 → chưa alert
+    #    Tick 7b: window=[900, 120, 120], median=120 ≤ 300 → ALERT!
     eta_close = {"eta_seconds": 120.0, "distance_meters": 280.0}
     with mock.patch("backend.scheduler.get_eta_async", return_value=eta_close):
-        _run(_tick(mock_bot))
+        _run(_tick(mock_bot))  # tick 7a: median=510, no alert yet
+    mock_bot.bot.send_message.assert_not_called()
+    assert store.get_session().status == TripStatus.ACTIVE
+    ok("Scheduler tick 7a (ETA close=120s, window=[900,120]) → median=510 > prep → no alert yet")
+
+    with mock.patch("backend.scheduler.get_eta_async", return_value=eta_close):
+        _run(_tick(mock_bot))  # tick 7b: median=120, ALERT!
     mock_bot.bot.send_message.assert_called_once()
     call_kw = mock_bot.bot.send_message.call_args.kwargs
     markup_str = str(call_kw["reply_markup"])
@@ -161,7 +174,7 @@ def test_full_trip_flow(client, bot_app):
     assert "wake_snooze" in markup_str
     assert "wake_stop"   in markup_str
     assert store.get_session().status == TripStatus.WAKING
-    ok("Scheduler tick (ETA close=120s) -> WAKING + alert with 3 buttons sent")
+    ok("Scheduler tick 7b (ETA close=120s, window=[900,120,120]) → median=120 ≤ prep → WAKING + alert")
 
     # 8. wake_ack -> session cleared
     update, ctx, query = _fake_query("wake_ack")

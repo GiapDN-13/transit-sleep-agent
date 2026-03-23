@@ -120,10 +120,14 @@ async def start_trip(body: GpsPayload):
     Polling loop (T1.6) sẽ pick up session và bắt đầu tính ETA.
     """
     session = _require_active_session()
+    prev_status = session.status
     session.last_lat = body.lat
     session.last_lon = body.lon
     session.status = TripStatus.ACTIVE
-    logger.info("Trip started — gps=(%.5f, %.5f)", body.lat, body.lon)
+    logger.info(
+        "Trip started (%s→ACTIVE) — gps=(%.5f, %.5f)",
+        prev_status.value, body.lat, body.lon,
+    )
     return StartTripResponse(
         ok=True,
         message=f"Dang theo doi hanh trinh den {session.destination_name}. Ban co the khoa man hinh.",

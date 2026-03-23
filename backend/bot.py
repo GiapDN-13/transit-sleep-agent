@@ -38,6 +38,7 @@ from backend.config import config
 from backend.destinations import DESTINATION_MAP, DESTINATIONS, PREP_TIME_OPTIONS
 from backend.session_store import TripStatus
 import backend.session_store as store
+from backend.trip_logger import record_trip
 
 SNOOZE_SECONDS = 5 * 60
 
@@ -316,6 +317,8 @@ async def cb_wake_ack(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await query.answer("✅ Chúc bạn xuống xe an toàn!")
     session = store.get_session()
     dest_name = session.destination_name if session else "điểm đến"
+    if session:
+        record_trip(session, "ack")
     store.clear_session()
     await query.edit_message_text(
         text=f"✅ <b>Đã ghi nhận!</b>\n\nChúc bạn xuống xe an toàn tại <b>{dest_name}</b>. 🚶",
@@ -331,9 +334,10 @@ async def cb_wake_snooze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not session:
         await query.edit_message_text("❌ Hành trình đã kết thúc. Gõ /start để bắt đầu lại.")
         return
-    session.status      = TripStatus.ACTIVE
+    session.status       = TripStatus.ACTIVE
     session.snooze_until = time.time() + SNOOZE_SECONDS
     session.wake_sent_at = None
+    session.eta_window   = []   # Reset smoothing window — bắt đầu đo lại sau snooze
     await query.edit_message_text(
         text="💤 <b>Đã snooze 5 phút.</b>\nSẽ báo lại khi gần đến trạm.",
         parse_mode="HTML",
@@ -344,6 +348,9 @@ async def cb_wake_snooze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def cb_wake_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer("🛑 Đã dừng theo dõi")
+    session = store.get_session()
+    if session:
+        record_trip(session, "stop")
     store.clear_session()
     await query.edit_message_text(
         text="🛑 <b>Đã dừng theo dõi hành trình.</b>\nGõ /start để bắt đầu lại khi cần.",

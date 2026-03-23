@@ -1,16 +1,20 @@
 """
 ETA polling loop — background asyncio task.
 
-Chạy mỗi POLL_INTERVAL giây:
-  1. Đọc session hiện tại
-  2. Nếu ACTIVE và có GPS → gọi ORS lấy ETA
-  3. Nếu ETA ≤ prep_time → gửi wake alert qua Telegram, chuyển status → WAKING
-
-Không re-send nếu đã WAKING (T1.7 sẽ reset về ACTIVE khi user snooze).
-Tự dừng khi session DONE hoặc không có session.
+M2 improvements:
+  - Dynamic poll interval theo ETA bands → tiết kiệm ORS quota
+      ETA > 30 min  → poll mỗi 5 phút
+      ETA 10–30 min → poll mỗi 2 phút
+      ETA < 10 min  → poll mỗi 30 giây
+  - ETA smoothing: median của ETA_WINDOW_SIZE lần đo gần nhất
+      → tránh false alarm khi GPS noise làm ETA nhảy loạn
+      → cần ít nhất ⌈N/2⌉ lần đo liên tiếp < prep_time để trigger alert
+  - Wake alert retry: nếu user không ack sau WAKE_RETRY_AFTER giây,
+      gửi lại tối đa WAKE_MAX_RETRIES lần
 """
 import asyncio
 import logging
+import statistics
 import time
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -23,7 +27,41 @@ from backend.config import config
 
 logger = logging.getLogger(__name__)
 
-POLL_INTERVAL = 30  # giây
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+# ETA bands → poll interval
+ETA_BAND_FAR_S   = 30 * 60    # 30 phút
+ETA_BAND_NEAR_S  = 10 * 60    # 10 phút
+
+POLL_FAR     = 5 * 60         # > 30 min ETA  → poll mỗi 5 phút
+POLL_NEAR    = 2 * 60         # 10–30 min ETA → poll mỗi 2 phút
+POLL_CLOSE   = 30             # < 10 min ETA  → poll mỗi 30 giây
+POLL_NO_GPS  = 60             # chưa có GPS   → poll mỗi 1 phút
+
+# ETA smoothing
+ETA_WINDOW_SIZE = 3           # median của 3 lần đo gần nhất
+
+# Wake alert retry
+WAKE_RETRY_AFTER = 3 * 60    # retry nếu chưa ack sau 3 phút
+WAKE_MAX_RETRIES = 3         # tối đa 3 lần retry
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _get_poll_interval(session: store.TripSession | None) -> int:
+    """Tính poll interval dựa trên smoothed ETA hiện tại."""
+    if session is None or session.last_eta_seconds is None:
+        return POLL_NO_GPS
+    eta = session.last_eta_seconds
+    if eta > ETA_BAND_FAR_S:
+        return POLL_FAR
+    if eta > ETA_BAND_NEAR_S:
+        return POLL_NEAR
+    return POLL_CLOSE
 
 
 # ---------------------------------------------------------------------------
@@ -41,9 +79,9 @@ def _wake_keyboard() -> InlineKeyboardMarkup:
 async def send_wake_alert(bot_app: Application, session: store.TripSession) -> None:
     """Gửi tin nhắn cảnh báo đến OWNER_CHAT_ID."""
     eta_min = round((session.last_eta_seconds or 0) / 60)
-    dist_m  = ""
+    retry_note = f" (nhắc lại #{session.wake_retry_count})" if session.wake_retry_count > 0 else ""
     text = (
-        f"⏰ <b>SẮP ĐẾN TRẠM!</b>\n\n"
+        f"⏰ <b>SẮP ĐẾN TRẠM!</b>{retry_note}\n\n"
         f"📍 Điểm xuống: <b>{session.destination_name}</b>\n"
         f"🕐 ETA còn khoảng: <b>{eta_min} phút</b>\n\n"
         f"Bạn muốn làm gì?"
@@ -54,7 +92,10 @@ async def send_wake_alert(bot_app: Application, session: store.TripSession) -> N
         reply_markup=_wake_keyboard(),
         parse_mode="HTML",
     )
-    logger.info("Wake alert sent — eta=%.0fs", session.last_eta_seconds or 0)
+    logger.info(
+        "Wake alert sent (retry=%d) — eta=%.0fs",
+        session.wake_retry_count, session.last_eta_seconds or 0,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -63,11 +104,24 @@ async def send_wake_alert(bot_app: Application, session: store.TripSession) -> N
 
 async def _tick(bot_app: Application) -> None:
     session = store.get_session()
-
     if not session:
         return
 
-    if session.status not in (TripStatus.ACTIVE,):
+    # --- WAKING: kiểm tra có cần retry không ---
+    if session.status == TripStatus.WAKING:
+        if (
+            session.wake_retry_count < WAKE_MAX_RETRIES
+            and session.wake_sent_at is not None
+            and time.time() - session.wake_sent_at >= WAKE_RETRY_AFTER
+        ):
+            session.wake_retry_count += 1
+            session.wake_sent_at = time.time()
+            logger.info("Retrying wake alert #%d", session.wake_retry_count)
+            await send_wake_alert(bot_app, session)
+        return
+
+    # --- Chỉ process khi ACTIVE ---
+    if session.status != TripStatus.ACTIVE:
         return
 
     # Snooze: bỏ qua cho đến khi hết thời gian snooze
@@ -89,14 +143,24 @@ async def _tick(bot_app: Application) -> None:
         logger.warning("Scheduler: ORS call failed — %s", exc)
         return
 
-    session.last_eta_seconds = result["eta_seconds"]
-    eta = result["eta_seconds"]
+    raw_eta = result["eta_seconds"]
+
+    # --- ETA Smoothing: cập nhật sliding window, dùng median ---
+    session.eta_window.append(raw_eta)
+    if len(session.eta_window) > ETA_WINDOW_SIZE:
+        session.eta_window.pop(0)
+
+    smoothed_eta = statistics.median(session.eta_window)
+    session.last_eta_seconds = smoothed_eta
+
     logger.info(
-        "Scheduler tick — eta=%.0fs (%.0fm), prep=%ds",
-        eta, result["distance_meters"], session.prep_time_seconds,
+        "Scheduler tick — raw=%.0fs smooth=%.0fs dist=%.0fm prep=%ds window=%s",
+        raw_eta, smoothed_eta, result["distance_meters"],
+        session.prep_time_seconds,
+        [round(e) for e in session.eta_window],
     )
 
-    if eta <= session.prep_time_seconds:
+    if smoothed_eta <= session.prep_time_seconds:
         session.status = TripStatus.WAKING
         session.wake_sent_at = time.time()
         await send_wake_alert(bot_app, session)
@@ -107,13 +171,17 @@ async def _tick(bot_app: Application) -> None:
 # ---------------------------------------------------------------------------
 
 async def _poll_loop(bot_app: Application) -> None:
-    logger.info("Scheduler started — polling every %ds", POLL_INTERVAL)
+    logger.info("Scheduler started — dynamic polling (ETA bands)")
     while True:
         try:
             await _tick(bot_app)
         except Exception as exc:
             logger.error("Scheduler: unexpected error in tick — %s", exc, exc_info=True)
-        await asyncio.sleep(POLL_INTERVAL)
+
+        session = store.get_session()
+        interval = _get_poll_interval(session)
+        logger.debug("Next poll in %ds", interval)
+        await asyncio.sleep(interval)
 
 
 def start_scheduler(bot_app: Application) -> asyncio.Task:
