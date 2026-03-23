@@ -25,14 +25,16 @@ def _require(key: str) -> str:
 
 def _ensure_https(key: str, value: str) -> str:
     """
-    Đảm bảo URL có https:// scheme.
-    Tránh lỗi 'only https links are allowed' khi user quên điền scheme
-    trong Koyeb / .env (ví dụ: điền 'xxx.koyeb.app' thay vì 'https://xxx.koyeb.app').
+    Chuẩn hoá URL:
+      1. Tự động thêm https:// nếu thiếu scheme
+         (tránh lỗi 'only https links are allowed')
+      2. Xoá trailing slash
+         (tránh double-slash khi nối path, ví dụ: 'xxx.koyeb.app/' + '/webhook' → '//webhook')
     """
     if not value.startswith(("https://", "http://")):
-        fixed = f"https://{value}"
-        _log.warning("'%s' thiếu scheme — tự động thêm https://: %s → %s", key, value, fixed)
-        return fixed
+        value = f"https://{value}"
+        _log.warning("'%s' thiếu scheme — tự động thêm https://", key)
+    value = value.rstrip("/")
     return value
 
 
