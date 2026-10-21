@@ -211,3 +211,5 @@ ban_do_cua_toi.html
 
 # Local docs — tracked in repo để share kiến trúc
 # docs/
+# Runtime trip log (personal data) — written by backend/trip_logger.py
+trip_history.jsonl
